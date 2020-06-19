@@ -1,0 +1,16 @@
+[package]
+name = "bed_cov"
+version = "0.1.0"
+authors = ["Seth Stadick <sstadick@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+coitrees= {path="../coitrees"}
+clap = "2.33.1"
+bio = "0.31.0"
+enum_dispatch="0.3.1"
+grep-cli="0.1.5"
+rust-lapper="0.4.4"
+termcolor = "1.1.0"
