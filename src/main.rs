@@ -1,26 +1,22 @@
 #[macro_use]
 extern crate clap;
+extern crate bedlib;
 extern crate grep_cli;
 use bio::data_structures::interval_tree::ArrayBackedIntervalTree;
 use bio::utils;
-use enum_dispatch::enum_dispatch;
 use rust_lapper::Lapper;
 use std::collections::HashMap;
 use std::error::Error;
-use std::fs::File;
-use std::io;
 use std::io::prelude::*;
-use std::io::BufReader;
 
-// arg_enum! {
-#[enum_dispatch(Runnable)]
-#[derive(Debug)]
-enum Library {
-    LapperLib,
-    CoitreesLib,
-    IITreeLib,
+arg_enum! {
+    #[derive(Debug)]
+    enum Library {
+        LapperLib,
+        CoitreesLib,
+        IITreeLib,
+    }
 }
-// }
 
 #[derive(Debug)]
 struct LapperLib {}
@@ -31,21 +27,32 @@ struct CoitreesLib {}
 #[derive(Debug)]
 struct IITreeLib {}
 
-#[enum_dispatch]
 trait Runnable {
-    fn run(&self, file_a: &str, file_b: &str);
+    fn run(&self, file_a: &str, file_b: &str) -> Result<(), Box<dyn Error>>;
+}
+
+// TODO: There must be a better way
+impl Runnable for Library {
+    fn run(&self, file_a: &str, file_b: &str) -> Result<(), Box<dyn Error>> {
+        match *self {
+            Library::LapperLib => LapperLib {}.run(file_a, file_b),
+            Library::CoitreesLib => CoitreesLib {}.run(file_a, file_b),
+            Library::IITreeLib => IITreeLib {}.run(file_a, file_b),
+        }
+    }
 }
 
 impl Runnable for LapperLib {
     fn run(&self, file_a: &str, file_b: &str) -> Result<(), Box<dyn Error>> {
         let mut bed = HashMap::new();
-        let mut bederator = BedErator::new(file_a)?;
-        while let Some((chr, start, stop)) = bederator.next() {
+        let mut buffer = String::new();
+        let mut reader = bedlib::bed_reader::BufReader::open(file_a)?;
+        while let Some((chr, start, stop)) = reader.read_line(&mut buffer)? {
             if !bed.contains_key(chr) {
                 bed.insert(chr.to_string(), vec![]);
             }
-            let start = start.parse::<u32>().unwrap();
-            let stop = stop.parse::<u32>().unwrap();
+            let start = start.parse::<u32>()?;
+            let stop = stop.parse::<u32>()?;
             bed.get_mut(chr).unwrap().push(rust_lapper::Interval {
                 start,
                 stop,
@@ -57,53 +64,50 @@ impl Runnable for LapperLib {
         for (key, value) in bed.into_iter() {
             lappers.insert(key, Lapper::new(value));
         }
-        println!("{:?}", lappers);
+        // Iter over B and get the values as we go
+        let mut handle = grep_cli::stdout(termcolor::ColorChoice::Never);
+        let mut reader = bedlib::bed_reader::BufReader::open(file_b)?;
+        while let Some((chr, start, stop)) = reader.read_line(&mut buffer)? {
+            if let Some(lapper) = lappers.get(chr) {
+                let st0 = start.parse::<u32>()?;
+                let en0 = stop.parse::<u32>()?;
+                let mut cov_st = 0;
+                let mut cov_en = 0;
+                let mut cov = 0;
+                let mut n = 0;
+                for iv in lapper.find(st0, en0) {
+                    n += 1;
+                    let st1 = if iv.start > st0 { iv.start } else { st0 };
+                    let en1 = if iv.stop < en0 { iv.stop } else { en0 };
+                    if st1 > cov_en {
+                        cov += cov_en - cov_st;
+                        cov_st = st1;
+                        cov_en = en1;
+                    } else {
+                        cov_en = if cov_en < en1 { en1 } else { cov_en };
+                    }
+                }
+                cov += cov_en - cov_st;
+                writeln!(handle, "{}\t{}\t{}\t{}\t{}", chr, st0, en0, n, cov)?;
+            } else {
+                // print the default stuff
+                writeln!(handle, "{}\t{}\t{}\t0\t0", chr, start, stop)?;
+            }
+            buffer.clear();
+        }
         Ok(())
     }
 }
 
 impl Runnable for CoitreesLib {
-    fn run(&self, file_a: &str, file_b: &str) {
-        panic!();
+    fn run(&self, file_a: &str, file_b: &str) -> Result<(), Box<dyn Error>> {
+        Ok(())
     }
 }
 
 impl Runnable for IITreeLib {
-    fn run(&self, file_a: &str, file_b: &str) {
-        panic!();
-    }
-}
-
-struct BedErator<'a> {
-    reader: BufReader<File>,
-    buffer: String,
-}
-
-impl<'a> BedErator<'a> {
-    fn new(file: &str) -> Result<Self, Box<dyn Error>> {
-        let file = File::open(file)?;
-        let mut reader = BufReader::new(file);
-        let mut buffer = String::new();
-        Ok(BedErator { reader, buffer })
-    }
-}
-struct BedLine<'a> {
-    chr: &'a str
-    start: &'a str,
-    stop: &'a str,
-}
-impl<'a> Iterator for BedErator<'a> {
-    type Item = BedLine<'a>;
-    fn next(&mut self) -> Option<BedLine<'a>> {
-        self.buffer.clear();
-        while self.reader.read_line(&mut self.buffer).unwrap() > 0 {
-            let mut iter = self.buffer[..self.buffer.len() - 1].split('\t');
-            let chr = iter.next().unwrap();
-            let start = iter.next().unwrap();
-            let stop = iter.next().unwrap();
-            return Some(BedLine{chr, start, stop});
-        }
-        None
+    fn run(&self, file_a: &str, file_b: &str) -> Result<(), Box<dyn Error>> {
+        Ok(())
     }
 }
 
@@ -119,7 +123,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let file_a = matches.value_of("file_a").unwrap();
     let file_b = matches.value_of("file_b").unwrap();
     let lib = value_t!(matches.value_of("library"), Library).unwrap();
-    lib.run(file_a, file_b);
+    lib.run(file_a, file_b)?;
 
     // Read in all of file 1 into hash / lapper structure
     // let mut bed = HashMap::new();

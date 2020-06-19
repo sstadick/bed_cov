@@ -6,6 +6,14 @@ edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[lib]
+name = "bedlib"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bed_cov"
+path = "src/main.rs"
+
 [dependencies]
 coitrees= {path="../coitrees"}
 clap = "2.33.1"
